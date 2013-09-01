@@ -13,7 +13,7 @@ APXS=apxs
 APACHECTL=apachectl
 
 #   additional defines, includes and libraries
-#DEFS=-Dmy_define=my_value
+DEFS=-D_REENTERANT
 #INCLUDES=-Imy/include/dir
 #LIBS=-Lmy/lib/dir -lmylib
 

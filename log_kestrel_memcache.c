@@ -1,3 +1,19 @@
+/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include <sys/uio.h>
 #include <sys/types.h>
 #include <sys/time.h>
@@ -16,11 +32,23 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
+#define APR_WANT_STRFUNC
+#define APR_WANT_MEMFUNC
+#define APR_WANT_STDIO
+#define APR_WANT_IOVEC
+#define APR_WANT_BYTEFUNC
+#define APR_WANT_IOVEC
+#define APR_IOVEC_DEFINED
+#include "apr_want.h"
+
+#include "apr_strings.h"
 #include "apr_lib.h"
+#include "apr_hash.h"
+#include "apr_optional.h"
+#include "apr_file_io.h"
 #include "apr_pools.h"
 #include "apr_strings.h"
 #include "apr_date.h"
-#include "apr_hash.h"
 #include "apr_tables.h"
 
 #include "ap_config.h"
@@ -200,60 +228,105 @@ static int recv_with_timeout(int sockfd, apr_time_t usec, apr_pool_t * pool, cha
 	return (-1);
 }
 
+static apr_status_t addrinfo_cleanup(void *data) {
+	if (data) {
+		struct addrinfo *addr = (struct addrinfo *)data;
+		if (addr) {
+			freeaddrinfo(addr);
+		}
+	}
+    return (APR_SUCCESS);
+}
 
-apr_status_t kestrel_write(apr_pool_t *pool, kestrel_log_t *kestrel_log, struct iovec *uio, int uio_len) {
+/**
+ *
+ */
+struct addrinfo * socket_addrinfo_make(apr_pool_t *pool, char *hostname, char *port) {
+	// apr_socket_t *sock = NULL; // TODO ipv6
+	struct addrinfo hints;
+	struct addrinfo *addr;
+	char *port_str = "80";
+	if (!hostname)
+		return NULL;
+
+	if (port) {
+		port_str = port;
+	}
+	memset(&hints, 0x00, sizeof(struct addrinfo));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+
+	/* DON'T use apr_getaddrinfo(), because some version multiple address can not be handled */
+	/* DON'T use gethostbyname(), because it uses a static storage, so it's not thread-safe */
+	/* Be careful in using getaddrinfo(), because it allocates memory internal, so it need to call freeaddrinfo(); */
+	if (getaddrinfo(hostname, port_str, &hints, &addr) != 0) {
+		return NULL;
+	}
+	apr_pool_cleanup_register(pool, (void *) addr, addrinfo_cleanup, apr_pool_cleanup_null);
+	return addr;
+}
+
+
+apr_status_t kestrel_write(request_rec *r, kestrel_log_t *kestrel_log, struct iovec *uio, int uio_len) {
+	unsigned char buf[sizeof(struct in_addr)];
 	struct addrinfo *addr = NULL;
 	char *response = NULL;
 	apr_status_t rv;
-	apr_pool_t *p = pool;
+	apr_pool_t *p = r->pool;
 	apr_time_t to;
 	int sd;
+	int retry_counter = 0;
 
 	if (!uio || uio_len == 0) {
 		return (-1);
 	}
+	while(retry_counter <= kestrel_log->retry) {
+		addr = socket_addrinfo_make(p, kestrel_log->host, kestrel_log->port);
+		addr = get_random_addr(addr);
+		if ((sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+			freeaddrinfo(addr);
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "apr_socket_create fail (%s:%s%s)",
+					kestrel_log->host, kestrel_log->port, kestrel_log->category);
+			continue;
+		}
+		set_sock_linger(sd);
+		/* kestrel_log->connectTimeout : mili-second */
+		to = kestrel_log->connectTimeout * 1000; /* make form as microseconds */
 
-//	//ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, threadinfo->r, "##### SENDSTR : (%s) ", reqstr);
-//	addr = threadinfo->comm_info->inetaddr;
-//	if (addr == NULL) {
-//		if ((addr = godaum_addr_make(threadinfo->comm_info->uri.hostname, threadinfo->comm_info->uri.port_str)) == NULL) {
-//			return godaum_comm_msg(GODAUM_INVALID_HOST, threadinfo, -1, NULL, thread_result);
-//		}
-//	}
-//	addr = get_random_addr(addr);
-//
-//	if ((sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-//		return godaum_comm_msg(GODAUM_CREATE_SOCK_FAIL, threadinfo, -1, NULL, thread_result);
-//	}
-//
-//	set_sock_linger(sd);
-//
-//	/* threadinfo->alias->timeout : mili-second */
-//	to = threadinfo->comm_info->timeout * 1000; /* make form as microseconds */
-//
-//	/* connect socket with non-block with timeout */
-//	if ((rv = connect_nonb_with_timeout(sd, (struct sockaddr*) (addr->ai_addr), addr->ai_addrlen, to)) != 0) {
-//		close(sd);
-//		return godaum_comm_msg(GODAUM_CONNECT_FAIL, threadinfo, rv, NULL, thread_result);
-//	}
-//
-//	/* send */
-//	if ((rv = send_with_timeout(sd, to, uio, uio_len)) != 0) {
-//		close(sd);
-//		return godaum_comm_msg(GODAUM_SEND_FAIL, threadinfo, rv, NULL, thread_result);
-//	}
-//
-//	/* recv */
-//	if ((rv = recv_with_timeout(sd, to, p, &response)) != 0) {
-//		close(sd);
-//		return godaum_comm_msg(GODAUM_RECV_FAIL, threadinfo, rv, response, thread_result);
-//	}
-//	//ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, threadinfo->user->r, "##### RESPONSE : (%s) ", response);
-//	close(sd);
-//
-//	if (!response || strlen(response) == 0) {
-//		return godaum_comm_msg(GODAUM_PARSERESPONSE_FAIL, threadinfo, -1, NULL, thread_result);
-//	}
+		/* connect socket with non-block with timeout */
+		if ((rv = connect_nonb_with_timeout(sd, (struct sockaddr*) (addr->ai_addr), addr->ai_addrlen, to)) != 0) {
+			close(sd);
+			freeaddrinfo(addr);
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_connect_nonb_with_timeout fail (%s:%s%s)",
+							kestrel_log->host, kestrel_log->port, kestrel_log->category);
+			continue;
+		}
 
-	return OK;
+		/* send */
+		if ((rv = send_with_timeout(sd, to, uio, uio_len)) != 0) {
+			close(sd);
+			freeaddrinfo(addr);
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_send_with_timeout fail (%s:%s%s)",
+							kestrel_log->host, kestrel_log->port, kestrel_log->category);
+			continue;
+		}
+
+		/* recv */
+		if ((rv = recv_with_timeout(sd, to, p, &response)) != 0) {
+			close(sd);
+			freeaddrinfo(addr);
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_recv_with_timeout fail (%s:%s%s) : %s",
+							kestrel_log->host, kestrel_log->port, kestrel_log->category, response ? response : "");
+			continue;
+		}
+		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "##### RESPONSE : (%s) ", response);
+		close(sd);
+		freeaddrinfo(addr);
+		if (!response || strlen(response) == 0) {
+			return (APR_SUCCESS);
+		}
+		retry_counter++;
+	}
+
+	return (APR_SUCCESS);
 }

@@ -153,7 +153,7 @@ static apr_status_t kestrel_log_writer(request_rec *r,
 			logs[i].iov_base = (void *) strs[i];
 			logs[i].iov_len = strl[i];
 		}
-		rv = kestrel_write(r->pool, kestrel_log, logs, i);
+		rv = kestrel_write(r, kestrel_log, logs, i);
     }
 
     return OK;
@@ -226,20 +226,7 @@ static int log_kestrel_pre_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *p
   return OK;
 }
 
-static apr_status_t log_kestrel_child_exit(void *data)
-{
-    apr_pool_t *p = data;
-    apr_hash_index_t *i;
-    kestrel_log_t *l;
-
-    for (i = apr_hash_first(p, kestrel_hash); i; i = apr_hash_next(i)) {
-        apr_hash_this(i, NULL, NULL, (void*) &l);
-    }
-    return OK;
-}
-
-static void log_kestrel_child_init(apr_pool_t *p, server_rec *s)
-{
+static void log_kestrel_child_init(apr_pool_t *p, server_rec *s) {
 }
 
 static void register_hooks(apr_pool_t *p)
