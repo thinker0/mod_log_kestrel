@@ -47,6 +47,7 @@
 
 
 #include "log_kestrel.h"
+#include "log_kestrel_memcache.h"
 
 module AP_MODULE_DECLARE_DATA log_kestrel_module;
 
@@ -87,7 +88,7 @@ static void *kestrel_log_writer_init(apr_pool_t *p, server_rec *s, const char* n
         uri = apr_pstrdup(p,name);     /* keep a copy for config */
 
         k_log->host = "defaulthost";
-        k_log->port = 1463;
+        k_log->port = "1463";
         k_log->category = "default";
         k_log->connectTimeout = conf->timeoutInterval;
         k_log->retryTimeout = conf->retryInterval;
