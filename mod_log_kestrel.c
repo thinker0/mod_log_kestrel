@@ -20,7 +20,7 @@
 #include "apr_hash.h"
 #include "apr_optional.h"
 #include "apr_file_io.h"
-
+#include "apr_uri.h"
 #define APR_WANT_STRFUNC
 #define APR_WANT_MEMFUNC
 #define APR_WANT_STDIO
@@ -65,7 +65,7 @@ typedef struct {
 
 
 /* setup a new log target, called from mod_log_config */
-static void *kestrel_log_writer_init(apr_pool_t *p, server_rec *s, const char* name)
+static void *kestrel_log_writer_init(apr_pool_t *p, server_rec *s, const char *name)
 {
     kestrel_log_t *k_log;
     char *uri;
@@ -74,51 +74,29 @@ static void *kestrel_log_writer_init(apr_pool_t *p, server_rec *s, const char* n
     kestrel_log_config *conf = ap_get_module_config(s->module_config,
                                                    &log_kestrel_module);
 
-    int kestrelWriter = 1;
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "kestrel_log_writer_init %s", name);
     // TODO Zookeeper, Multiple host
     if(name != NULL && strstr(name, "kestrel") == NULL)
-      kestrelWriter = 0;
-
-    if(!kestrelWriter && conf->logLocally == 0)
       return NULL;
 
     if (! (k_log = apr_hash_get(kestrel_hash, name, APR_HASH_KEY_STRING))) {
         k_log = apr_palloc(p, sizeof(kestrel_log_t));
         k_log->uri = apr_pstrdup(p, name); /* keep our full name */
-        uri = apr_pstrdup(p,name);     /* keep a copy for config */
+        uri = apr_pstrdup(p, name);     /* keep a copy for config */
 
-        k_log->host = "defaulthost";
-        k_log->port = "1463";
+        k_log->host = "localhost";
+        k_log->port = "22133";
         k_log->category = "default";
         k_log->connectTimeout = conf->timeoutInterval;
         k_log->retryTimeout = conf->retryInterval;
 
-        if(kestrelWriter != 0) {
-          c = ap_strrchr(uri, ':');
-          if(c != NULL) {
-            if(c != uri+6) {
-              k_log->port = apr_atoi64(c+1);
-              *c = '\0';
-            }
-          } else {
-            k_log->port = 1463;
-          }
-
-          c = ap_strrchr(uri, '@');
-          if(c != NULL) {
-            *c++ = '\0';
-            k_log->host = c;
-          }
-
-          c = ap_strrchr(uri, ':');
-          if(c != NULL) {
-            *c++ = '\0';
-            k_log->category = c;
-          }
-          k_log->localonly = 0;
-        } else {
-          k_log->localonly = 1;
-          k_log->normal_handle = normal_log_writer_init(p, s, name);
+        {
+            // CustomLog kestrel://queue_name@localhost:22133 common
+            apr_uri_t *uri_info = apr_pcalloc(p, sizeof(apr_uri_t));
+            apr_uri_parse(p, uri, uri_info);
+            k_log->category = uri_info->user;
+            k_log->host = uri_info->hostname; // TODO multi host, zookeeper hosts
+            k_log->port = uri_info->port_str;
         }
         apr_hash_set(kestrel_hash, name, APR_HASH_KEY_STRING, k_log);
     }
