@@ -76,10 +76,13 @@ static void *kestrel_log_writer_init(apr_pool_t *p, server_rec *s, const char *n
 
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "kestrel_log_writer_init %s", name);
     // TODO Zookeeper, Multiple host
-    if(name != NULL && strstr(name, "kestrel") == NULL)
-      return NULL;
+    if(name != NULL && strstr(name, "|kestrel") == NULL) {
+      ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "pass normal_log_writer_init %s", name);
+      return (normal_log_writer_init)(p, s, name);
+    }
 
     if (! (k_log = apr_hash_get(kestrel_hash, name, APR_HASH_KEY_STRING))) {
+    	name++;
         k_log = apr_palloc(p, sizeof(kestrel_log_t));
         k_log->uri = apr_pstrdup(p, name); /* keep our full name */
         uri = apr_pstrdup(p, name);     /* keep a copy for config */
@@ -98,6 +101,8 @@ static void *kestrel_log_writer_init(apr_pool_t *p, server_rec *s, const char *n
             k_log->host = uri_info->hostname; // TODO multi host, zookeeper hosts
             k_log->port = uri_info->port_str;
         }
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "kestrel_log_writer_init initialize kestrel://%s@%s:%s",
+        		 k_log->category, k_log->host, k_log->port);
         apr_hash_set(kestrel_hash, name, APR_HASH_KEY_STRING, k_log);
     }
 
@@ -111,7 +116,7 @@ static apr_status_t kestrel_log_writer(request_rec *r,
                                       int nelts,
                                       apr_size_t len)
 {
-    kestrel_log_t *kestrel_log = (kestrel_log_t*)handle;
+    kestrel_log_t *kestrel_log = (kestrel_log_t *)handle;
     //    kestrel_log_config *conf;
 
     if(kestrel_log->localonly != 0 && kestrel_log->normal_handle) {
@@ -120,6 +125,7 @@ static apr_status_t kestrel_log_writer(request_rec *r,
       fprintf(stderr, "called normal log writer\n");
       return result;
     }
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "kestrel_log_writer....");
 
     {
 		char *str;
@@ -130,6 +136,7 @@ static apr_status_t kestrel_log_writer(request_rec *r,
 	    
 		for (i = 0, s = str; i < nelts; ++i) {
 			logs[i].iov_base = (void *) strs[i];
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "kestrel_log_writer....: %s", strs[i]);
 			logs[i].iov_len = strl[i];
 		}
 		rv = kestrel_write(r, kestrel_log, logs, i);
@@ -193,10 +200,6 @@ static int log_kestrel_pre_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *p
 
   if(log_set_writer_init_fn && log_set_writer_fn) {
     if (!normal_log_writer_init) {
-      // FIXME: [emaland] add some error here if we can't load mod_log_config
-      // Or maybe just warn and turn off local logging by default.  ???
-      module *mod_log_config = ap_find_linked_module("mod_log_config.c");
-      (void)mod_log_config; /* avoid annoying compiler warning */
       normal_log_writer_init = log_set_writer_init_fn(kestrel_log_writer_init);
       normal_log_writer = log_set_writer_fn(kestrel_log_writer);
     }
@@ -211,9 +214,9 @@ static void log_kestrel_child_init(apr_pool_t *p, server_rec *s) {
 static void register_hooks(apr_pool_t *p)
 {
     /* register our log writer before mod_log_config starts */
-    static const char *pre[] = { "mod_log_config.c", NULL };
+    static const char *post[] = { "mod_log_config.c", NULL };
     kestrel_hash = apr_hash_make(p);
-    ap_hook_pre_config(log_kestrel_pre_config, pre, NULL, APR_HOOK_REALLY_FIRST);
+    ap_hook_pre_config(log_kestrel_pre_config, post, NULL, APR_HOOK_REALLY_FIRST);
     ap_hook_child_init(log_kestrel_child_init, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
