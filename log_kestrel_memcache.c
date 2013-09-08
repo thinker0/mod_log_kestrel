@@ -151,8 +151,14 @@ static int connect_nonb_with_timeout(int sockfd, const struct sockaddr *saptr, s
 	return error; /* if connect completed, error is 0, else error returned */
 }
 
-static int send_with_timeout(int sockfd, apr_time_t usec, struct iovec *uio, int uio_len) {
-	int n;
+static int send_with_timeout(request_rec *r, int sockfd, apr_time_t usec,
+									char *category,
+									const char **strs,
+									int *strl,
+									int nelts,
+									apr_size_t len) {
+	int n = 0;
+	int idx = 0;
 	struct timeval tval;
 	fd_set wset;
 
@@ -162,22 +168,73 @@ static int send_with_timeout(int sockfd, apr_time_t usec, struct iovec *uio, int
 	tval.tv_usec = usec;
 
 	if ((n = select(sockfd + 1, NULL, &wset, NULL, (usec ? &tval : NULL))) == 0) {
+		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "select %d", n);
 		return (ETIMEDOUT);
 	}
 
 	if (FD_ISSET(sockfd, &wset)) {
 		int error = 0;
 		socklen_t len = sizeof(error);
-		if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) { /* pending error */
+		if ( (n = getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &len)) < 0) { /* pending error */
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "getsockopt %d", n);
 			return (-1);
 		}
-		if (writev(sockfd, uio, uio_len) != uio_len) { /* send error */
+
+
+		struct iovec iov_logs[APR_MAX_IOVEC_SIZE] = {0, };
+		int iov_idx = 0;
+		apr_size_t new_length = 0;
+		int j = 0;
+		int tlen = 0;
+		const char *buf;
+
+	    // memcached protocol
+	    // "SET <key> <flags> <exptime> <bytes> [noreply]\r\n"
+	    iov_logs[iov_idx].iov_base = (void *) "SET ";
+	    iov_logs[iov_idx].iov_len = 4;
+	    new_length += 4;
+	    iov_idx++;
+
+	    buf = apr_pstrdup(r->pool, category);
+	    tlen = strlen(buf);
+	    iov_logs[iov_idx].iov_base = (void *) buf;
+	    iov_logs[iov_idx].iov_len = tlen;
+	    new_length += tlen;
+	    iov_idx++;
+
+	    iov_logs[iov_idx].iov_base = (void *) " 1 0 ";
+	    iov_logs[iov_idx].iov_len = 5;
+	    new_length += 5;
+	    iov_idx++;
+
+	    buf = apr_psprintf(r->pool, "%d\r\n", len);
+	    tlen = strlen(buf);
+	    iov_logs[iov_idx].iov_base = (void *) buf;
+	    iov_logs[iov_idx].iov_len = tlen;
+	    new_length += tlen;
+	    iov_idx++;
+
+		for (j = 0; j < nelts; ++j) {
+			iov_logs[iov_idx].iov_base = (void *) strs[j];
+			iov_logs[iov_idx].iov_len = strl[j];
+			new_length += strl[j];
+			iov_idx++;
+		}
+
+		iov_logs[iov_idx].iov_base = (void *) "\r\nQUIT\r\n";
+	    iov_logs[iov_idx].iov_len = 8;
+	    new_length += 5;
+	    iov_idx++;
+
+		if ((n = writev(sockfd, iov_logs, iov_idx)) != new_length) { /* send error */
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "writev %d != %d", n, new_length);
 			return (-1);
 		} else {
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "writev success %d", n);
 			return (0);
 		}
 	}
-
+	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "select error %d", n);
 	/* select error */
 	return (-1);
 }
@@ -252,8 +309,8 @@ struct addrinfo *socket_addrinfo_make(request_rec *r, char *hostname, char *port
 		return NULL;
     }
 	memset(&hints, 0x00, sizeof(struct addrinfo));
-	hints.ai_family = AF_UNSPEC;            /* Allow IPv4 or IPv6 */
-    // hints.ai_family = AF_INET;           /* Allow IPv4 */
+	// hints.ai_family = AF_UNSPEC;            /* Allow IPv4 or IPv6 */
+    hints.ai_family = AF_INET;           /* Allow IPv4 */
 	hints.ai_socktype = SOCK_STREAM;
 
 	/* DON'T use apr_getaddrinfo(), because some version multiple address can not be handled */
@@ -267,7 +324,11 @@ struct addrinfo *socket_addrinfo_make(request_rec *r, char *hostname, char *port
 	return addr;
 }
 
-apr_status_t kestrel_write(request_rec *r, kestrel_log_t *kestrel_log, struct iovec *uio, int uio_len) {
+apr_status_t kestrel_write(request_rec *r, kestrel_log_t *kestrel_log,
+									const char **strs,
+									int *strl,
+									int nelts,
+									apr_size_t len) {
 	struct addrinfo *addr = NULL;
 	char *response = NULL;
 	apr_status_t rv = 0;
@@ -275,20 +336,21 @@ apr_status_t kestrel_write(request_rec *r, kestrel_log_t *kestrel_log, struct io
 	int socket_descriptor = -1;
 	int retry_counter = 0;
 
-	if (!uio || uio_len == 0) {
+	if (!strs || nelts == 0 || len == 0) {
 		return (-1);
 	}
     /* kestrel_log->connectTimeout : mili-second */
     timeout = kestrel_log->connectTimeout * 1000; /* make form as microseconds */
+
     for (retry_counter = 0; retry_counter < kestrel_log->retry; retry_counter++) {
 		addr = socket_addrinfo_make(r, kestrel_log->host, kestrel_log->port);
         if (addr == NULL) {            
 			continue;
         }
 		addr = get_random_addr(addr);
-		if ((socket_descriptor = socket(AF_UNSPEC, SOCK_STREAM, 0)) == -1) {     // AF_UNSPEC(ipv4, ipv6), AF_INET(ipv4)
-			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "apr_socket_create fail (%s:%s%s) r:%d",
-                          kestrel_log->host, kestrel_log->port, kestrel_log->category, retry_counter);
+		if ((socket_descriptor = socket(AF_INET, SOCK_STREAM, 0)) == -1) {     // AF_UNSPEC(ipv4, ipv6), AF_INET(ipv4)
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "apr_socket_create fail (%s@%s:%s) re(%d)",
+								kestrel_log->category, kestrel_log->host, kestrel_log->port, retry_counter);
 			continue;
 		}
 		set_sock_linger(socket_descriptor);
@@ -296,32 +358,33 @@ apr_status_t kestrel_write(request_rec *r, kestrel_log_t *kestrel_log, struct io
 		/* connect socket with non-block with timeout */
 		if ((rv = connect_nonb_with_timeout(socket_descriptor, (struct sockaddr *) (addr->ai_addr), addr->ai_addrlen, timeout)) != 0) {
 			close(socket_descriptor);
-			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_connect_nonb_with_timeout fail (%s:%s%s) r:%d",
-							kestrel_log->host, kestrel_log->port, kestrel_log->category, retry_counter);
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_connect_nonb_with_timeout fail (%s@%s:%s) re(%d)",
+								kestrel_log->category, kestrel_log->host, kestrel_log->port, retry_counter);
 			continue;
 		}
 
 		/* send */
-		if ((rv = send_with_timeout(socket_descriptor, timeout, uio, uio_len)) != 0) {
+		if ((rv = send_with_timeout(r, socket_descriptor, timeout, kestrel_log->category, strs, strl, nelts, len)) != 0) {
 			close(socket_descriptor);
-			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_send_with_timeout fail (%s:%s%s) r:%d",
-							kestrel_log->host, kestrel_log->port, kestrel_log->category, retry_counter);
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_send_with_timeout fail (%s@%s:%s) re(%d)",
+								kestrel_log->category, kestrel_log->host, kestrel_log->port, retry_counter);
 			continue;
 		}
 
 		/* recv */
 		if ((rv = recv_with_timeout(socket_descriptor, timeout, r->pool, &response)) != 0) {
 			close(socket_descriptor);
-			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_recv_with_timeout fail (%s:%s%s) : %s r:%d",
-							kestrel_log->host, kestrel_log->port, kestrel_log->category, response ? response : "", retry_counter);
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "_recv_with_timeout fail (%s@%s:%s) : %s re(%d)",
+								kestrel_log->category, kestrel_log->host, kestrel_log->port, response ? response : "", retry_counter);
 			continue;
 		}
 		close(socket_descriptor);
 		if (!response || strlen(response) == 0) {
-            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "##### RESPONSE : (%s) r:%d",
-                          response, retry_counter);
+            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "##### RESPONSE : (%s) re(%d)",
+                          	  	  response, retry_counter);
 			return (APR_SUCCESS);
 		}
+		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "kestrel_write. re(%d)", retry_counter);
 	}
 
 	return (APR_SUCCESS);

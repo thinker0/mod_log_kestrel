@@ -61,6 +61,7 @@ typedef struct {
   int timeoutInterval;
   int retryInterval;
   int logLocally;
+  int retry;
 } kestrel_log_config;
 
 
@@ -92,13 +93,14 @@ static void *kestrel_log_writer_init(apr_pool_t *p, server_rec *s, const char *n
         k_log->category = "default";
         k_log->connectTimeout = conf->timeoutInterval;
         k_log->retryTimeout = conf->retryInterval;
+        k_log->retry = conf->retry;
 
         {
             // CustomLog kestrel://queue_name@localhost:22133 common
             apr_uri_t *uri_info = apr_pcalloc(p, sizeof(apr_uri_t));
             apr_uri_parse(p, uri, uri_info);
             k_log->category = uri_info->user;
-            k_log->host = uri_info->hostname; // TODO multi host, zookeeper hosts
+            k_log->host = uri_info->hostname; // TODO multiple host, Zookeeper hosts
             k_log->port = uri_info->port_str;
         }
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "kestrel_log_writer_init initialize kestrel://%s@%s:%s",
@@ -116,45 +118,31 @@ static apr_status_t kestrel_log_writer(request_rec *r,
                                       int nelts,
                                       apr_size_t len)
 {
-    kestrel_log_t *kestrel_log = (kestrel_log_t *)handle;
+    kestrel_log_t *kestrel_log = (kestrel_log_t *) handle;
     //    kestrel_log_config *conf;
-
+    // ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "kestrel_log_writer..%d.%d", kestrel_log->retry, kestrel_log->localonly);
     if(kestrel_log->localonly != 0 && kestrel_log->normal_handle) {
-      fprintf(stderr, "calling normal log writer\n");
       apr_status_t result = normal_log_writer(r, kestrel_log->normal_handle, strs, strl, nelts, len);
-      fprintf(stderr, "called normal log writer\n");
+      ap_log_rerror(APLOG_MARK, APLOG_WARNING, result, r, "called normal log writer");
       return result;
     }
-    ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "kestrel_log_writer....");
+    // ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "kestrel_log_writer....%d", nelts);
 
-    {
-		char *str;
-		char *s;
-		int i;
-		apr_status_t rv;
-	    struct iovec logs[APR_MAX_IOVEC_SIZE];
-	    
-		for (i = 0, s = str; i < nelts; ++i) {
-			logs[i].iov_base = (void *) strs[i];
-			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "kestrel_log_writer....: %s", strs[i]);
-			logs[i].iov_len = strl[i];
-		}
-		rv = kestrel_write(r, kestrel_log, logs, i);
-    }
+	apr_status_t rv = kestrel_write(r, kestrel_log, strs, strl, nelts, len);
+	ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "kestrel_log_writer...%d (%d bytes)", rv, len);
 
     return OK;
 }
 
 static void *make_log_kestrel_config(apr_pool_t *p, server_rec *s)
 {
-    kestrel_log_config *conf =
-      (kestrel_log_config *)apr_palloc(p, sizeof(kestrel_log_config));
+    kestrel_log_config *conf = (kestrel_log_config *) apr_pcalloc(p, sizeof(kestrel_log_config));
 
     conf->fallbackURI = NULL;     /* secondary kestrel host */
     conf->logLocally = 1;         /* allow normal apache logging */
     conf->timeoutInterval = 2000; /* 2 seconds */
     conf->retryInterval = 5000;   /* 5 seconds */
-
+    conf->retry = 1;              /* 1 time */
     return conf;
 }
 
@@ -169,12 +157,19 @@ static const char *logkestrel_timeout(cmd_parms *cmd, void *dcfg, const char *ar
     return OK;
 }
 
+static const char *logkestrel_retry_interval(cmd_parms *cmd, void *dcfg, const char *arg)
+{
+    kestrel_log_config *conf = ap_get_module_config(cmd->server->module_config,
+                                                   &log_kestrel_module);
+    conf->retryInterval = apr_atoi64(arg);
+    return OK;
+}
+
 static const char *logkestrel_retry(cmd_parms *cmd, void *dcfg, const char *arg)
 {
     kestrel_log_config *conf = ap_get_module_config(cmd->server->module_config,
                                                    &log_kestrel_module);
-
-    conf->retryInterval = apr_atoi64(arg);
+    conf->retry = apr_atoi64(arg);
 
     return OK;
 }
@@ -183,9 +178,11 @@ static const command_rec log_kestrel_cmds[] =
   {
     AP_INIT_TAKE1("KestrelTimeoutInterval", logkestrel_timeout, NULL, RSRC_CONF,
                   "Kestrel connection timeout in milliseconds"),
-    AP_INIT_TAKE1("KestrelRetryInterval", logkestrel_retry, NULL, RSRC_CONF,
+    AP_INIT_TAKE1("KestrelRetryInterval", logkestrel_retry_interval, NULL, RSRC_CONF,
                   "Time between retries connecting to primary kestrel store, "
                   "in milliseconds"),
+    AP_INIT_TAKE1("KestrelRetry", logkestrel_retry, NULL, RSRC_CONF,
+			  	  "Time Retry kestrel store."),
     {NULL}
   };
 
