@@ -129,7 +129,7 @@ static apr_status_t kestrel_log_writer(request_rec *r,
     // ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "kestrel_log_writer....%d", nelts);
 
 	apr_status_t rv = kestrel_write(r, kestrel_log, strs, strl, nelts, len);
-	ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "kestrel_log_writer...%d (%d bytes)", rv, len);
+	ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "kestrel_log_writer...%d (%"APR_SIZE_T_FMT" bytes)", rv, len);
 
     return OK;
 }
@@ -140,7 +140,7 @@ static void *make_log_kestrel_config(apr_pool_t *p, server_rec *s)
 
     conf->fallbackURI = NULL;     /* secondary kestrel host */
     conf->logLocally = 1;         /* allow normal apache logging */
-    conf->timeoutInterval = 2000; /* 2 seconds */
+    conf->timeoutInterval = 100; /* 100 ms */
     conf->retryInterval = 5000;   /* 5 seconds */
     conf->retry = 1;              /* 1 time */
     return conf;
