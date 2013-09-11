@@ -1,8 +1,7 @@
-.libs
 *.o
-*.la
 *.lo
 *.slo
+*.la
 *.xcodeproj
 .project
 .cproject
