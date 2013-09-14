@@ -292,7 +292,7 @@ static apr_status_t addrinfo_cleanup(void *data) {
 /**
  *
  */
-struct addrinfo *socket_addrinfo_make(request_rec *r, char *hostname, char *port_str) {
+static struct addrinfo *socket_addrinfo_make(request_rec *r, char *hostname, char *port_str) {
 	// apr_socket_t *sock = NULL; // TODO ipv6
 	struct addrinfo hints;
 	struct addrinfo *addr;

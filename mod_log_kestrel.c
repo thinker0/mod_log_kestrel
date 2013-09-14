@@ -100,7 +100,7 @@ static void *kestrel_log_writer_init(apr_pool_t *p, server_rec *s, const char *n
             k_log->host = uri_info->hostname; // TODO multiple host, Zookeeper hosts
             k_log->port = uri_info->port_str;
         }
-        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "kestrel_log_writer_init initialize kestrel://%s@%s:%s",
+        ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "kestrel_log_writer_init initialize kestrel://%s@%s:%s",
         		 	 	 	 k_log->category, k_log->host, k_log->port);
         apr_hash_set(kestrel_hash, name, APR_HASH_KEY_STRING, k_log);
     }
