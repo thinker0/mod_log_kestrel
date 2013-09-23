@@ -26,14 +26,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
-
-apr_status_t kestrel_write(request_rec *r, kestrel_log_t *kestrel_log,
-									const char **strs,
-									int *strl,
-									int nelts,
-									apr_size_t len);
-
-
+  
+  apr_status_t kestrel_write(request_rec *r, kestrel_log_t *kestrel_log,
+                             const char **strs,
+                             int *strl,
+                             int nelts,
+                             apr_size_t len);
+  
+  
 #ifdef __cplusplus
 }
 #endif

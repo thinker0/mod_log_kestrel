@@ -24,31 +24,31 @@
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
+  
+  typedef struct {
+    struct addrinfo *addr;
+    char *host;
+    int port;
+  } host_port_info_t;
+  
+  /* single log target */
+  typedef struct {
+    char *uri;
+    char *host;
+    char *port;
+    apr_array_header_t *host_infos_arr;
+    char *category;
+    int connectTimeout;
     
-    typedef struct {
-        struct addrinfo *addr;
-        char *host;
-        int port;
-    } host_port_info_t;
-
-    /* single log target */
-    typedef struct {
-        char *uri;
-        char *host;
-        char *port;
-        apr_array_header_t *host_infos_arr;
-        char *category;
-        int connectTimeout;
-
-        const char *fallbackURI;
-        int fallingback;
-        int retry;
-        int retryTimeout;
-
-        int localonly; /* this store is not a kestrel store */
-        void *normal_handle; /* apache mod_log_config handle */
-    } kestrel_log_t;
-
+    const char *fallbackURI;
+    int fallingback;
+    int retry;
+    int retryTimeout;
+    
+    int localonly; /* this store is not a kestrel store */
+    void *normal_handle; /* apache mod_log_config handle */
+  } kestrel_log_t;
+  
 #ifdef __cplusplus
 }
 #endif
