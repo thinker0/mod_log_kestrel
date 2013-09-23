@@ -203,11 +203,11 @@ static void register_hooks(apr_pool_t *p)
 /* Dispatch list for API hooks */
 module AP_MODULE_DECLARE_DATA log_kestrel_module = {
   STANDARD20_MODULE_STUFF,
-  NULL,                  		/* create per-dir    config structures */
-  NULL,                  		/* merge  per-dir    config structures */
+  NULL,                       /* create per-dir    config structures */
+  NULL,                       /* merge  per-dir    config structures */
   make_log_kestrel_config,    /* create per-server config structures */
-  NULL,                  		/* merge  per-server config structures */
+  NULL,                       /* merge  per-server config structures */
   log_kestrel_cmds,           /* table of config file commands       */
-  register_hooks         		/* register hooks                      */
+  register_hooks              /* register hooks                      */
 };
 
